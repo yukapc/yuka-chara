@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Yuka</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+         font-family: system-ui, sans-serif; background: #f3eff7; color: #2a2433; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 16px; }
+  button { font: inherit; padding: 8px 14px; border: 0; border-radius: 10px; background: #fff; box-shadow: 0 1px 3px #0002; cursor: pointer; }
+  p { font-size: 13px; color: #6b6178; }
+</style>
+</head>
+<body>
+<sd-puppet id="yuka" size="360"></sd-puppet>
+<div class="bar">
+  <button onclick="yuka.react('happy')">うれしい</button>
+  <button onclick="yuka.react('surprise')">びっくり</button>
+  <button onclick="yuka.react('shy')">照れ</button>
+  <button onclick="yuka.react('nod')">うなずく</button>
+  <button onclick="yuka.talk(1500)">しゃべる</button>
+</div>
+<p>マウスを動かすと目で追い、頭をなでると笑います</p>
+<script src="sd-puppet.js"></script>
+</body>
+</html>
