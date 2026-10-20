@@ -10,6 +10,7 @@
  *   el.lookAt(x, y)                画面座標を見る
  *   el.setManual({yaw, pitch})     手動で向きを指定（-1..1）。null で解除
  *   el.talk(ms)                    口パク
+ *   属性 max-dpr="1.5"            描画の細かさの上限（大きく表示する時に下げると軽い。既定 2）
  *
  * 素材フォルダ: parts.webp / puppet.json （tools/build_puppet.py で生成）
  */
@@ -61,7 +62,18 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
       this.fx = root.querySelector('.fx');
       this.ready = false;
     }
+    // 描画ループ（ページから外れたら止める＝見えないまま電池を使わない）
+    _run() {
+      if (this._looping) return;
+      this._looping = true; this._last = performance.now();
+      const loop = (t) => {
+        if (!this.isConnected) { this._looping = false; return; }
+        requestAnimationFrame(loop); this._tick(t);
+      };
+      requestAnimationFrame(loop);
+    }
     connectedCallback() {
+      if (this.ready) this._run();
       if (this._started) return;
       this._started = true;
       this._load(this.getAttribute('src') || SCRIPT_BASE + 'yuka/').catch(e => console.error('[sd-puppet]', e));
@@ -90,15 +102,14 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
       this._bind();
       this.ready = true;
       this._last = performance.now();
-      const loop = (t) => { requestAnimationFrame(loop); this._tick(t); };
-      requestAnimationFrame(loop);
+      this._run();
       this.dispatchEvent(new CustomEvent('ready'));
     }
 
     _layout() {
       const size = parseFloat(this.getAttribute('size') || '200');
       this.scale = size / this.BH;
-      const s = this.scale, dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const s = this.scale, dpr = Math.min(window.devicePixelRatio || 1, parseFloat(this.getAttribute('max-dpr') || '2'));   // 大きく表示する時は max-dpr を下げると軽くなる
       this.style.width = (this.BW * s) + 'px';
       this.style.height = (this.BH * s) + 'px';
       Object.assign(this.canvas.style, {
