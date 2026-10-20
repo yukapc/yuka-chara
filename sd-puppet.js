@@ -305,7 +305,13 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
     setManual(m) { this.manual = m ? { yaw: m.yaw || 0, pitch: m.pitch || 0 } : null; this.lastInput = performance.now(); }
     talk(ms = 1500) { this.talkUntil = performance.now() + ms; }
     // 表情を固定表示（素材フォルダの「役割名」。null で解除）。例: setExpression('笑顔')
-    setExpression(name) { this.expr = name; }
+    setExpression(name) { this.expr = name; this._fixedExpr = !!name; }
+    // 反応に合わせて表情を一瞬だけ出す（その表情の絵が無ければ何もしない。setExpression で固定中は邪魔しない）
+    _flash(name, ms) {
+      if (this._fixedExpr || !this.byName[name + ':face']) return;
+      this.expr = name; clearTimeout(this._flashT);
+      this._flashT = setTimeout(() => { if (!this._fixedExpr && this.expr === name) this.expr = null; }, ms);
+    }
 
     react(type) {
       const S = this.S;
@@ -313,7 +319,7 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
       switch (type) {
         case 'surprise':
           S.squash.kick(-3); this._hop(260); S.armR.kick(-2.2); S.armL.kick(-2.5); S.wide.t = 1; S.brow.t = 1; S.mouth.t = 0.7; this.open = 1; this.blinkPhase = -1;
-          S.hairY.kick(40); this._particle('!', 0.78, 0.0, '#ff5a7a');
+          S.hairY.kick(40); this._particle('!', 0.78, 0.0, '#ff5a7a'); this._flash('驚き', 900);
           setTimeout(() => { S.wide.t = 0; S.brow.t = 0; S.mouth.t = 0; this._blink(); }, 700);
           break;
         case 'happy':
@@ -322,7 +328,7 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
           setTimeout(() => { S.mouth.t = 0; }, 900);
           break;
         case 'shy':
-          S.blush.t = 1; this._happyEyes(1400); S.yaw.t = -0.6; S.pitch.t = -0.35; S.roll.t = -0.08; S.eyeX.t = -0.8;
+          S.blush.t = 1; this._happyEyes(1400); this._flash('照れ', 1900); S.yaw.t = -0.6; S.pitch.t = -0.35; S.roll.t = -0.08; S.eyeX.t = -0.8;
           this._lookAway = performance.now() + 1700;
           setTimeout(() => { S.blush.t = 0.3; }, 1800);
           break;
