@@ -10,7 +10,7 @@
  *   el.lookAt(x, y)                画面座標を見る
  *   el.setManual({yaw, pitch})     手動で向きを指定（-1..1）。null で解除
  *   el.talk(ms)                    口パク
- *   el.pose('左を指す', ms)        ポーズの絵に一時的に差し替え（tools/build_poses.py で追加したもの）
+ *   el.pose('左を指す', ms, {x,y}) ポーズの絵に一時的に差し替え（tools/build_poses.py で追加したもの）。{x,y} は腕で指す画面座標
  *   属性 max-dpr="1.5"            描画の細かさの上限（大きく表示する時に下げると軽い。既定 2）
  *
  * 素材フォルダ: parts.webp / puppet.json （tools/build_puppet.py で生成）
@@ -310,16 +310,26 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
     }
 
     // ---------- 公開API ----------
-    lookAt(x, y) { this.look = { x, y, t: performance.now() }; }
+    lookAt(x, y) { this.look = { x, y, t: performance.now() }; this.lastInput = this.look.t; if (this.mood === 'sleep') this._wake(false); }
     setManual(m) { this.manual = m ? { yaw: m.yaw || 0, pitch: m.pitch || 0 } : null; this.lastInput = performance.now(); }
     talk(ms = 1500) { this.talkUntil = performance.now() + ms; }
     // 表情を固定表示（素材フォルダの「役割名」。null で解除）。例: setExpression('笑顔')
     setExpression(name) { this.expr = name; this._fixedExpr = !!name; }
     // ポーズの絵に一時的に差し替える（その絵が無ければ何もしない）。ms を省略すると 1.2 秒
-    pose(name, ms = 1200) {
+    pose(name, ms = 1200, aim = null) {
       if (!this.byName || !this.byName['pose:' + name]) return false;
+      const arm = this.byName['pose:' + name + ':arm'];
+      this.armTo = 0;
+      if (arm && aim) {                       // 肩から見た目標の向き − 絵の腕の向き（回しすぎない範囲で）
+        const rc = this.getBoundingClientRect(), s = this.scale;
+        const px = rc.left + (arm.pivot[0] - this.bx) * s, py = rc.top + (arm.pivot[1] - this.by) * s;
+        let d = Math.atan2(aim.y - py, aim.x - px) - arm.ang0;
+        d = Math.atan2(Math.sin(d), Math.cos(d));
+        this.armTo = clamp(d, -0.55, 0.35);
+      }
+      if (this.poseName !== name) { this.armAng = 0; this.S.squash.kick(-1.2); }   // 切り替わる瞬間に小さく弾ませてごまかす
       this.poseName = name; clearTimeout(this._poseT);
-      this._poseT = setTimeout(() => { if (this.poseName === name) this.poseName = null; }, ms);
+      this._poseT = setTimeout(() => { if (this.poseName === name) { this.poseName = null; this.S.squash.kick(-0.8); } }, ms);
       return true;
     }
     // 反応に合わせて表情を一瞬だけ出す（その表情の絵が無ければ何もしない。setExpression で固定中は邪魔しない）
@@ -332,6 +342,7 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
     react(type) {
       const S = this.S;
       this.lastInput = performance.now();
+      if (this.mood === 'sleep') this._wake(false);
       switch (type) {
         case 'surprise':
           S.squash.kick(-3); this._hop(260); S.armR.kick(-2.2); S.armL.kick(-2.5); S.wide.t = 1; S.brow.t = 1; S.mouth.t = 0.7; this.open = 1; this.blinkPhase = -1;
@@ -456,7 +467,7 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
       if (this.idleT > 0) return;
       this.idleT = rand(2.5, 5.5);
       if (this.look && performance.now() - this.look.t < 3500) return;
-      const back = () => { if (this.mood === 'idle' && !this.look) { S.yaw.t = 0; S.pitch.t = 0; S.eyeX.t = 0; S.eyeY.t = 0; S.roll.t = 0; this.lidHold = 0; } };
+      const back = () => { if (this.mood === 'idle' && this.lidHold === 0.35) this.lidHold = 0; if (this.mood === 'idle' && !this.look) { S.yaw.t = 0; S.pitch.t = 0; S.eyeX.t = 0; S.eyeY.t = 0; S.roll.t = 0; this.lidHold = 0; } };
       const p = Math.random();
       if (p < 0.28) {                               // きょろきょろ（目が先、顔があと）
         const yx = rand(-0.8, 0.8), yy = rand(-0.3, 0.4);
@@ -633,8 +644,10 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
       const talkPart = B['おしゃべり:mouth'];
       const mA = talkPart && mouthCover < 0.5 ? smooth(0.26, 0.36, mouth) : 0;
 
-      this.poseA = this.poseA || {};
-      const kPose = Math.min(1, (this._dt || 0.016) * 16);
+      // ポーズ：腕を指す方向へすばやく回す
+      const poseOn = !!(this.poseName && this.byName['pose:' + this.poseName]);
+      this.armAng = poseOn ? lerp(this.armAng || 0, this.armTo || 0, Math.min(1, (this._dt || 0.016) * 14)) : 0;
+      const ca = Math.cos(this.armAng), sa = Math.sin(this.armAng);
       for (const p of this.parts) {
         const isHead = p.group === 'head';
         const name = p.name;
@@ -645,7 +658,8 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
         for (let k = p.v0; k < p.v0 + p.vn; k++) {
           let x = R0[k * 2], y = R0[k * 2 + 1];
           if (p.spin || p.pose) {
-            // 回転コマ・ポーズの絵は全身の動き（ジャンプ・伸び縮み・傾き）だけ受ける
+            // 回転コマ・ポーズの絵は全身の動き（ジャンプ・伸び縮み・傾き）だけ受ける。ポーズの腕は肩を中心に回す
+            if (p.pivot) { const qx = x - p.pivot[0], qy = y - p.pivot[1]; x = p.pivot[0] + qx * ca - qy * sa; y = p.pivot[1] + qx * sa + qy * ca; }
           } else if (isHead) {
             // (1) 顔パーツのローカル変形（目・口）
             if (eye && (isEyeBall || isLash)) {
@@ -732,24 +746,14 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
         else if (name === 'blush') p.alpha = clamp(S.blush.v, 0, 1);
         else if (isEyeBall) p.alpha = smooth(0.04, 0.2, open);
         if (p.spin) { p.alpha = this.spinA || 0; continue; }
-        if (p.pose) { p.alpha = this.poseA[name] = lerp(this.poseA[name] || 0, name === 'pose:' + this.poseName ? 1 : 0, kPose); continue; }
+        if (p.pose) { p.alpha = p.of === this.poseName ? 1 : 0; continue; }
         // 回転コマは上に重ねて濃さを変えるので、下のキャラは回転コマが完全に出ている間だけ消す（半透明の二重像を防ぐ）
-        const under = (this.spinA || 0) >= 0.999 ? 0 : 1;
+        const under = (this.spinA || 0) >= 0.999 || poseOn ? 0 : 1;
         p.alpha *= under;
         if (p.expr) p.alpha = (p.kind === 'mouth' ? mA : (this.decA[name] || 0)) * under;
         else if (isEyeBall || isLash || isBrow) p.alpha *= 1 - eyeCover;
         else if (name === 'mouth' || name === 'mouth-open' || name === 'nose') p.alpha *= 1 - mouthCover;
       }
-    }
-
-    _poseCut() {
-      const PS = this.meta.poses; if (!PS) return null;
-      let full = 0; for (const k in this.poseA) full = Math.max(full, this.poseA[k]);
-      if (full < 0.999) return null;
-      // 全身の伸び縮み・ジャンプを足元基準でかけた時の、境目の高さ（キャンバス座標）
-      const S = this.S, [fx, fy] = this.rig.feet, squash = clamp(S.squash.v, -0.25, 0.25);
-      const lift = -this.jumpY - S.popY.v;
-      return fy - (fy - PS.keepFrom) * (1 + squash) - lift - this.by + this.padTop;
     }
 
     _setSpinFrame(i) {
@@ -775,15 +779,9 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
       gl.clearColor(0, 0, 0, 0); gl.clearStencil(0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
       this._boundTex = -1;
-      const cut = this._poseCut();
-      if (cut !== null) {
-        const k = this.canvas.height / this.CH;
-        gl.scissor(0, 0, this.canvas.width, Math.max(0, Math.round((this.CH - cut) * k)));
-      }
       for (const p of this.parts) {
         if (p.alpha <= 0.003) continue;
         const n = p.name;
-        if (cut !== null) { if (p.pose) gl.disable(gl.SCISSOR_TEST); else gl.enable(gl.SCISSOR_TEST); }
         // 黒目は白目の内側だけに描く（ステンシル）
         if (n.startsWith('eyewhite')) {
           gl.enable(gl.STENCIL_TEST); gl.stencilFunc(gl.ALWAYS, n.endsWith('r') ? 1 : 2, 0xff);
@@ -806,7 +804,7 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
         gl.uniform1f(u.uAlpha, p.alpha);
         gl.drawElements(gl.TRIANGLES, p.in, gl.UNSIGNED_SHORT, p.i0 * 2);
       }
-      gl.disable(gl.STENCIL_TEST); gl.disable(gl.SCISSOR_TEST);
+      gl.disable(gl.STENCIL_TEST);
     }
 
     // ---------- エフェクト ----------
