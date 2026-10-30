@@ -10,6 +10,7 @@
  *   el.lookAt(x, y)                画面座標を見る
  *   el.setManual({yaw, pitch})     手動で向きを指定（-1..1）。null で解除
  *   el.talk(ms)                    口パク
+ *   el.pose('左を指す', ms)        ポーズの絵に一時的に差し替え（tools/build_poses.py で追加したもの）
  *   属性 max-dpr="1.5"            描画の細かさの上限（大きく表示する時に下げると軽い。既定 2）
  *
  * 素材フォルダ: parts.webp / puppet.json （tools/build_puppet.py で生成）
@@ -91,7 +92,9 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
       const exprImg = meta.expressions && meta.expressions.length ? await loadImg(src + 'expr.webp' + ver).catch(() => null) : null;
       // くるっと回るコマ画像（あれば）
       const spinImg = meta.spin ? await loadImg(src + 'spin.webp' + ver).catch(() => null) : null;
-      this.meta = meta; this.rig = meta.rig; this.img = img; this.exprImg = exprImg; this.spinImg = spinImg;
+      // ポーズ違いの全身の絵（あれば）
+      const poseImg = meta.poses && meta.poses.items.length ? await loadImg(src + 'pose.webp' + ver).catch(() => null) : null;
+      this.meta = meta; this.rig = meta.rig; this.img = img; this.exprImg = exprImg; this.spinImg = spinImg; this.poseImg = poseImg;
       const b = this.rig.bounds;
       this.bx = b[0]; this.by = b[1]; this.BW = b[2] - b[0]; this.BH = b[3] - b[1];
       this.padX = this.BW * 0.35; this.padTop = this.BH * 0.22; this.padBot = this.BH * 0.04;
@@ -162,6 +165,12 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
         this.tex.push(mkTex(this.spinImg)); sizes.push(sp.atlas);
         list.push({ name: 'spin', spin: true, tex: this.tex.length - 1, group: 'spin', depth: 0,
                     x: sp.x, y: sp.y, w: sp.w, h: sp.h, u: 0, v: 0, uw: sp.cellW, vh: sp.cellH });
+      }
+
+      if (this.poseImg) {
+        const PS = this.meta.poses;
+        this.tex.push(mkTex(this.poseImg)); sizes.push(PS.atlas);
+        for (const q of PS.items) list.push(Object.assign({ pose: true, tex: this.tex.length - 1, group: 'pose', depth: 0 }, q, { name: 'pose:' + q.name }));
       }
 
       // パーツごとに格子メッシュを作り、1本のバッファにまとめる
@@ -306,6 +315,13 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
     talk(ms = 1500) { this.talkUntil = performance.now() + ms; }
     // 表情を固定表示（素材フォルダの「役割名」。null で解除）。例: setExpression('笑顔')
     setExpression(name) { this.expr = name; this._fixedExpr = !!name; }
+    // ポーズの絵に一時的に差し替える（その絵が無ければ何もしない）。ms を省略すると 1.2 秒
+    pose(name, ms = 1200) {
+      if (!this.byName || !this.byName['pose:' + name]) return false;
+      this.poseName = name; clearTimeout(this._poseT);
+      this._poseT = setTimeout(() => { if (this.poseName === name) this.poseName = null; }, ms);
+      return true;
+    }
     // 反応に合わせて表情を一瞬だけ出す（その表情の絵が無ければ何もしない。setExpression で固定中は邪魔しない）
     _flash(name, ms) {
       if (this._fixedExpr || !this.byName[name + ':face']) return;
@@ -617,6 +633,8 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
       const talkPart = B['おしゃべり:mouth'];
       const mA = talkPart && mouthCover < 0.5 ? smooth(0.26, 0.36, mouth) : 0;
 
+      this.poseA = this.poseA || {};
+      const kPose = Math.min(1, (this._dt || 0.016) * 16);
       for (const p of this.parts) {
         const isHead = p.group === 'head';
         const name = p.name;
@@ -626,8 +644,8 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
         const isHairF = name === 'front hair' || name === 'hair-shadow' || name === 'hairclips', isHairB = name === 'back hair' || name === 'headwear-back';
         for (let k = p.v0; k < p.v0 + p.vn; k++) {
           let x = R0[k * 2], y = R0[k * 2 + 1];
-          if (p.spin) {
-            // 回転コマは全身の動き（ジャンプ・伸び縮み）だけ受ける
+          if (p.spin || p.pose) {
+            // 回転コマ・ポーズの絵は全身の動き（ジャンプ・伸び縮み・傾き）だけ受ける
           } else if (isHead) {
             // (1) 顔パーツのローカル変形（目・口）
             if (eye && (isEyeBall || isLash)) {
@@ -714,6 +732,7 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
         else if (name === 'blush') p.alpha = clamp(S.blush.v, 0, 1);
         else if (isEyeBall) p.alpha = smooth(0.04, 0.2, open);
         if (p.spin) { p.alpha = this.spinA || 0; continue; }
+        if (p.pose) { p.alpha = this.poseA[name] = lerp(this.poseA[name] || 0, name === 'pose:' + this.poseName ? 1 : 0, kPose); continue; }
         // 回転コマは上に重ねて濃さを変えるので、下のキャラは回転コマが完全に出ている間だけ消す（半透明の二重像を防ぐ）
         const under = (this.spinA || 0) >= 0.999 ? 0 : 1;
         p.alpha *= under;
@@ -721,6 +740,16 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
         else if (isEyeBall || isLash || isBrow) p.alpha *= 1 - eyeCover;
         else if (name === 'mouth' || name === 'mouth-open' || name === 'nose') p.alpha *= 1 - mouthCover;
       }
+    }
+
+    _poseCut() {
+      const PS = this.meta.poses; if (!PS) return null;
+      let full = 0; for (const k in this.poseA) full = Math.max(full, this.poseA[k]);
+      if (full < 0.999) return null;
+      // 全身の伸び縮み・ジャンプを足元基準でかけた時の、境目の高さ（キャンバス座標）
+      const S = this.S, [fx, fy] = this.rig.feet, squash = clamp(S.squash.v, -0.25, 0.25);
+      const lift = -this.jumpY - S.popY.v;
+      return fy - (fy - PS.keepFrom) * (1 + squash) - lift - this.by + this.padTop;
     }
 
     _setSpinFrame(i) {
@@ -746,9 +775,15 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
       gl.clearColor(0, 0, 0, 0); gl.clearStencil(0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
       this._boundTex = -1;
+      const cut = this._poseCut();
+      if (cut !== null) {
+        const k = this.canvas.height / this.CH;
+        gl.scissor(0, 0, this.canvas.width, Math.max(0, Math.round((this.CH - cut) * k)));
+      }
       for (const p of this.parts) {
         if (p.alpha <= 0.003) continue;
         const n = p.name;
+        if (cut !== null) { if (p.pose) gl.disable(gl.SCISSOR_TEST); else gl.enable(gl.SCISSOR_TEST); }
         // 黒目は白目の内側だけに描く（ステンシル）
         if (n.startsWith('eyewhite')) {
           gl.enable(gl.STENCIL_TEST); gl.stencilFunc(gl.ALWAYS, n.endsWith('r') ? 1 : 2, 0xff);
@@ -771,7 +806,7 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
         gl.uniform1f(u.uAlpha, p.alpha);
         gl.drawElements(gl.TRIANGLES, p.in, gl.UNSIGNED_SHORT, p.i0 * 2);
       }
-      gl.disable(gl.STENCIL_TEST);
+      gl.disable(gl.STENCIL_TEST); gl.disable(gl.SCISSOR_TEST);
     }
 
     // ---------- エフェクト ----------
