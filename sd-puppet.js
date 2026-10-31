@@ -264,6 +264,12 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
         if (this.mood === 'sleep') this._wake(false);
         this.look = { x: e.clientX, y: e.clientY, t: performance.now() };
         const hit = this._hit(e.clientX, e.clientY);
+        // 撫でたまま指を外へ動かした → すぐ撫で終わりにして、照れずにそのまま指を目で追う
+        // （スマホは指を当てた所に捕まえられて pointerleave が来ないので、ここで見る）
+        if (e.buttons && hit !== 'head') {
+          if (this.pet.active) this._endPet(false);
+          else if (this._lookAway > performance.now()) this._lookAway = 0;
+        }
         if (hit === 'head' && (e.buttons || e.pointerType === 'mouse')) {
           const d = Math.hypot(e.clientX - this.pet.lastX, e.clientY - this.pet.lastY);
           if (d < 80) this.pet.dist += d * (e.buttons ? 1 : 0.5);
@@ -295,7 +301,7 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
       };
       this.addEventListener('pointerup', up);
       this.addEventListener('pointercancel', up);
-      this.addEventListener('pointerleave', () => { if (this.pet.active) this._endPet(); });
+      this.addEventListener('pointerleave', (e) => { if (this.pet.active) this._endPet(!e.buttons); });
       document.addEventListener('visibilitychange', () => { this._last = performance.now(); });
       new IntersectionObserver(([en]) => { this._offscreen = !en.isIntersecting; this._last = performance.now(); }).observe(this);
     }
@@ -429,16 +435,18 @@ void main(){ vec4 c = texture2D(uTex, vUV); if (c.a < uCut) discard; gl_FragColo
       if (now - this.pet.heartT > 380) { this.pet.heartT = now; this._hearts(1); }
       clearTimeout(this._petEnd); this._petEnd = setTimeout(() => this._endPet(), 700);
     }
-    _endPet() {
+    _endPet(shy = true) {                   // shy=false：指がまだ動いている（目をそらさず、そのまま指を追う）
       if (!this.pet.active) return;
       const S = this.S;
       this.pet.active = false; this.pet.dist = 0;
+      clearTimeout(this._petEnd);
       S.headX.t = 0; S.squash.t = 0; S.mouth.t = 0; S.roll.t = -0.08; S.hip.t = 0; S.armR.t = -0.05;
       setTimeout(() => { S.armR.t = 0; }, 2000);
       this.lidHold = 0; setTimeout(() => { if (!this.lidHold) this.happyEye = 0; }, 200);
-      // 照れて目をそらす
-      S.yaw.t = -0.55; S.pitch.t = -0.3; S.eyeX.t = -0.9; S.eyeY.t = 0.4;
-      this._lookAway = performance.now() + 1800; this.look = null;
+      if (shy) {                            // 照れて目をそらす
+        S.yaw.t = -0.55; S.pitch.t = -0.3; S.eyeX.t = -0.9; S.eyeY.t = 0.4;
+        this._lookAway = performance.now() + 1800; this.look = null;
+      }
       S.blush.t = 0.65;
       setTimeout(() => { S.blush.t = 0; S.roll.t = 0; this.mood = 'idle'; }, 2600);
     }
